@@ -8,7 +8,7 @@ import com.google.gson.JsonObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-data class AdminUiState(val checking:Boolean=true,val authenticated:Boolean=false,val adminInfo:JsonElement?=null,val busy:Boolean=false,val error:String?=null,val section:AdminSection=AdminSection.DASHBOARD,val stats:JsonElement?=null,val items:List<JsonElement> = emptyList(),val actionMessage:String?=null,val payload:JsonElement?=null,val voicePath:String?=null,val editingProfile:JsonElement?=null,val editingProfileId:String?=null,val walletFanniId:String?=null,val walletTransactions:List<JsonElement> = emptyList(),val editingClient:JsonElement?=null,val editingClientId:String?=null,val recoveryDetail:JsonElement?=null,val recoveryDetailId:String?=null,val supportCases:List<JsonElement> = emptyList(),val supportSelectedCase:JsonElement?=null)
+data class AdminUiState(val checking:Boolean=true,val authenticated:Boolean=false,val adminInfo:JsonElement?=null,val busy:Boolean=false,val error:String?=null,val section:AdminSection=AdminSection.DASHBOARD,val stats:JsonElement?=null,val items:List<JsonElement> = emptyList(),val actionMessage:String?=null,val payload:JsonElement?=null,val voicePath:String?=null,val editingProfile:JsonElement?=null,val editingProfileId:String?=null,val walletFanniId:String?=null,val walletTransactions:List<JsonElement> = emptyList(),val editingClient:JsonElement?=null,val editingClientId:String?=null,val recoveryDetail:JsonElement?=null,val recoveryDetailId:String?=null,val supportCases:List<JsonElement> = emptyList(),val supportViolations:List<JsonElement> = emptyList(),val supportSearchResults:List<JsonElement> = emptyList(),val supportSelectedCase:JsonElement?=null,val supportPasswordText:String?=null,val supportPasswordTitle:String="كلمة دعم العميل",val sectionSearch:String="",val storeUploadedImageUrl:String?=null,val storeUploadedImageFileId:String?=null,val identityFanniId:String?=null,val identityFrontPath:String?=null,val identityBackPath:String?=null,val adminInbox:List<JsonElement> = emptyList(),val adminUnreadCount:Int=0,val notificationDeliveries:List<JsonElement> = emptyList(),val adminNotificationError:String?=null,val uiLayoutPage:String="admin")
 class AdminViewModel(app:Application):AndroidViewModel(app){
  private val repo=AdminRepository(app)
  private val _state=MutableStateFlow(AdminUiState())
@@ -23,30 +23,107 @@ class AdminViewModel(app:Application):AndroidViewModel(app){
   try{repo.login(phone,password);val me=repo.getMe();_state.value=_state.value.copy(busy=false,authenticated=true,adminInfo=me);refresh()}
   catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تسجيل الدخول")}
  }
+ private suspend fun enrichStoreProducts(source:JsonElement):JsonElement{
+  val root=source.takeIf{it.isJsonObject}?.asJsonObject?.deepCopy()?:return source
+  runCatching{repo.get("api/admin/store/ad-settings")}.onSuccess{root.add("storeAdSettings",it)}.onFailure{root.addProperty("storeAdSettingsError",it.message?: "تعذر تحميل إعدادات الإعلانات")}
+  return root
+ }
+ private suspend fun enrichStoreOrders(source:JsonElement):JsonElement{
+  val root=source.takeIf{it.isJsonObject}?.asJsonObject?.deepCopy()?:return source
+  runCatching{repo.get("api/admin/store/orders/count")}.onSuccess{root.add("storeOrderCount",it)}
+  return root
+ }
  private suspend fun enrichDashboard(source:JsonElement):JsonElement{
   val root=source.takeIf{it.isJsonObject}?.asJsonObject?.deepCopy()?:return source
+  val warnings=com.google.gson.JsonArray()
   fun findArray(response:JsonElement?,vararg keys:String):com.google.gson.JsonArray?{
    if(response==null)return null
    if(response.isJsonArray)return response.asJsonArray
    if(response.isJsonObject){for(key in keys){val value=response.asJsonObject.get(key);if(value?.isJsonArray==true)return value.asJsonArray}}
    return null
   }
-  runCatching{repo.get("api/admin/orders")}.getOrNull()?.let{findArray(it,"orders","data","items")?.let{rows->root.add("dashboardOrders",rows)}}
-  runCatching{repo.get("api/admin/topup-requests")}.getOrNull()?.let{findArray(it,"requests","topups","data","items")?.let{rows->root.add("dashboardTopups",rows)}}
-  runCatching{repo.get("api/admin/complaints")}.getOrNull()?.let{findArray(it,"complaints","data","items")?.let{rows->root.add("dashboardComplaints",rows)}}
+  suspend fun attach(path:String,targetKey:String,label:String,vararg keys:String){
+   val response=runCatching{repo.get(path)}.getOrNull()
+   val rows=findArray(response,*keys)
+   if(rows!=null)root.add(targetKey,rows)
+   else warnings.add("$label: تعذر تحميل البيانات أو لم يُرجع الخادم قائمة صالحة")
+  }
+  suspend fun attachOptional(path:String,targetKey:String,vararg keys:String){
+   val response=runCatching{repo.get(path)}.getOrNull()?:return
+   findArray(response,*keys)?.let{root.add(targetKey,it)}
+  }
+  attach("api/admin/orders","dashboardOrders","الطلبات","orders","data","items")
+  attach("api/admin/topup-requests","dashboardTopups","طلبات الشحن","requests","topups","data","items")
+  attach("api/admin/complaints","dashboardComplaints","الشكاوى","complaints","data","items")
+  attachOptional("api/admin/fannis","dashboardTechnicians","fannis","technicians","items","data")
+  attachOptional("api/admin/fanni-profile-edits","dashboardProfileEdits","requests","edits","items")
+  attachOptional("api/admin/client-wallet/topup-requests","dashboardClientTopups","requests","items","data")
+  attachOptional("api/password-recovery/admin/requests","dashboardRecoveryRequests","recoveries","items","data")
+  root.add("dashboardWarnings",warnings)
   return root
  }
+ fun uploadStoreImage(uri:Uri,purpose:String)=viewModelScope.launch{
+  _state.value=_state.value.copy(busy=true,error=null,storeUploadedImageUrl=null,storeUploadedImageFileId=null)
+  try{
+   val result=repo.uploadStoreMedia(uri,purpose)
+   val url=result.takeIf{it.isJsonObject}?.asJsonObject?.get("imageUrl")?.takeIf{!it.isJsonNull}?.asString
+    ?:error("الخادم لم يُرجع رابط الصورة")
+   val id=result.asJsonObject.get("imageFileId")?.takeIf{!it.isJsonNull}?.asString
+    ?:error("الخادم لم يُرجع معرّف الصورة")
+   _state.value=_state.value.copy(busy=false,storeUploadedImageUrl=url,storeUploadedImageFileId=id,actionMessage="تم رفع الصورة إلى تخزين المتجر")
+  }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر رفع صورة المتجر")}
+ }
+ fun clearStoreUpload(){_state.value=_state.value.copy(storeUploadedImageUrl=null,storeUploadedImageFileId=null)}
  fun refresh()=load(AdminSection.DASHBOARD)
- fun open(section:AdminSection)=load(section)
+ private fun refreshDashboardSnapshot()=viewModelScope.launch{runCatching{enrichDashboard(repo.get(AdminSection.DASHBOARD))}.onSuccess{snapshot->_state.value=_state.value.copy(stats=snapshot)}}
+ fun open(section:AdminSection){_state.value=_state.value.copy(sectionSearch="");if(section==AdminSection.UI_LAYOUT)loadUiLayout("admin")else load(section)}
+ fun loadUiLayout(page:String)=viewModelScope.launch{
+  val safePage=page.takeIf{it in listOf("admin","client","fanni","password","support")}?: "admin"
+  _state.value=_state.value.copy(section=AdminSection.UI_LAYOUT,uiLayoutPage=safePage,busy=true,error=null,payload=null)
+  try{val data=repo.get("api/admin/ui-layout/$safePage");_state.value=_state.value.copy(busy=false,payload=data)}
+  catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تحميل تخطيط الصفحة")}
+ }
+ fun filterPageVisits(pageKey:String)=viewModelScope.launch{
+  val clean=pageKey.trim()
+  _state.value=_state.value.copy(section=AdminSection.PAGE_VISITS,busy=false,error=null,actionMessage="جاري تحميل سجل الزيارات للصفحة المحددة...")
+  try{
+   val path="api/admin/page-visits"+if(clean.isBlank())"" else "?pageKey="+Uri.encode(clean)
+   val data=repo.get(path)
+   _state.value=_state.value.copy(busy=false,payload=data,actionMessage=if(clean.isBlank())"عرض كل صفحات الموقع" else "تم تطبيق فلتر الصفحة: $clean")
+  }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تصفية سجل الزيارات")}
+ }
+ fun openClientOrders(phone:String){_state.value=_state.value.copy(sectionSearch=phone.trim());load(AdminSection.ORDERS)}
+ fun searchClients(query:String)=viewModelScope.launch{
+  val clean=query.trim()
+  if(clean.length<2){load(AdminSection.CLIENTS);return@launch}
+  _state.value=_state.value.copy(section=AdminSection.CLIENTS,busy=true,error=null,sectionSearch=clean)
+  try{
+   val data=repo.get("api/admin/clients?search="+Uri.encode(clean))
+   val rows=AdminSection.CLIENTS.extract(data)
+   _state.value=_state.value.copy(busy=false,items=rows,payload=data)
+  }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر البحث عن العملاء")}
+ }
  private fun load(section:AdminSection,preserveMessage:Boolean=false)=viewModelScope.launch{
   _state.value=_state.value.copy(section=section,busy=true,error=null,items=emptyList(),actionMessage=if(preserveMessage)_state.value.actionMessage else null)
   try{
    val response=repo.get(section)
-   val data=if(section==AdminSection.DASHBOARD||section==AdminSection.STATS)enrichDashboard(response) else response
+   val data=when(section){
+    AdminSection.DASHBOARD,AdminSection.STATS->enrichDashboard(response)
+    AdminSection.STORE_PRODUCTS->enrichStoreProducts(response)
+    AdminSection.STORE_ORDERS->enrichStoreOrders(response)
+    else->response
+   }
    val loaded=section.extract(data)
    val supportCases=if(section==AdminSection.SUPPORT)runCatching{repo.get("api/support/admin").asJsonObject.get("supportCases")?.takeIf{it.isJsonArray}?.asJsonArray?.map{it}?:emptyList()}.getOrDefault(emptyList()) else _state.value.supportCases
+   val supportViolations=if(section==AdminSection.SUPPORT)loaded else _state.value.supportViolations
+   val inboxResult=if(section==AdminSection.NOTIFICATIONS)runCatching{repo.get("api/notifications/admin")}else null
+   val deliveryResult=if(section==AdminSection.NOTIFICATIONS)runCatching{repo.get("api/notifications/admin/delivery-log")}else null
+   val adminInbox=inboxResult?.getOrNull()?.takeIf{it.isJsonObject}?.asJsonObject?.get("notifications")?.takeIf{it.isJsonArray}?.asJsonArray?.map{it}?:if(section==AdminSection.NOTIFICATIONS)emptyList() else _state.value.adminInbox
+   val adminUnreadCount=inboxResult?.getOrNull()?.takeIf{it.isJsonObject}?.asJsonObject?.get("unreadCount")?.takeIf{it.isJsonPrimitive}?.asInt?:if(section==AdminSection.NOTIFICATIONS)0 else _state.value.adminUnreadCount
+   val notificationDeliveries=deliveryResult?.getOrNull()?.takeIf{it.isJsonObject}?.asJsonObject?.get("deliveries")?.takeIf{it.isJsonArray}?.asJsonArray?.map{it}?:if(section==AdminSection.NOTIFICATIONS)emptyList() else _state.value.notificationDeliveries
+   val adminNotificationError=if(section==AdminSection.NOTIFICATIONS)listOfNotNull(inboxResult?.exceptionOrNull()?.message,deliveryResult?.exceptionOrNull()?.message).takeIf{it.isNotEmpty()}?.joinToString(" • ") else _state.value.adminNotificationError
    val visible=when(section){AdminSection.PENDING->loaded.filter{it.isJsonObject&&it.asJsonObject.get("isApproved")?.asBoolean!=true&&it.asJsonObject.get("isDisabled")?.asBoolean!=true&&it.asJsonObject.get("status")?.asString!="rejected"};AdminSection.DISABLED->loaded.filter{it.isJsonObject&&(it.asJsonObject.get("isDisabled")?.asBoolean==true||it.asJsonObject.get("status")?.asString=="disabled")};AdminSection.OFFERS->loaded.filter{it.isJsonObject&&it.asJsonObject.get("offers")?.let{v->v.isJsonArray&&v.asJsonArray.size()>0}==true};else->loaded}
-   _state.value=_state.value.copy(busy=false,stats=if(section==AdminSection.DASHBOARD||section==AdminSection.STATS)data else _state.value.stats,items=visible,payload=data,supportCases=supportCases,supportSelectedCase=if(section==AdminSection.SUPPORT)null else _state.value.supportSelectedCase)
+   _state.value=_state.value.copy(busy=false,stats=if(section==AdminSection.DASHBOARD||section==AdminSection.STATS)data else _state.value.stats,items=visible,payload=data,supportCases=supportCases,supportViolations=supportViolations,supportSearchResults=if(section==AdminSection.SUPPORT)emptyList() else _state.value.supportSearchResults,supportSelectedCase=if(section==AdminSection.SUPPORT)null else _state.value.supportSelectedCase,adminInbox=adminInbox,adminUnreadCount=adminUnreadCount,notificationDeliveries=notificationDeliveries,adminNotificationError=adminNotificationError)
   }
   catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تحميل البيانات")}
  }
@@ -54,9 +131,44 @@ class AdminViewModel(app:Application):AndroidViewModel(app){
   _state.value=_state.value.copy(busy=true,error=null,actionMessage=null)
   try{
    val result=repo.mutate(method,path,body)
-   if(_state.value.section==AdminSection.REPORTS)_state.value=_state.value.copy(busy=false,payload=result,actionMessage=result.toString())
-   else{_state.value=_state.value.copy(busy=false,actionMessage=result.toString());load(_state.value.section,true)}
+   val response=result.takeIf{it.isJsonObject}?.asJsonObject
+   val serverMessage=response?.get("message")?.takeIf{!it.isJsonNull}?.asString
+   val actionMessage=if(path=="api/admin/store/products/import"){
+    val summary="تم الاستيراد: "+(response?.get("importedCount")?.toString()?: "0")+" منتج • المكرر والمتخطى: "+(response?.get("duplicateCount")?.toString()?: "0")+" • الصفوف المرفوضة: "+(response?.get("errorCount")?.toString()?: "0")
+    val details=mutableListOf<String>()
+    listOf("duplicates" to "مكرر","errors" to "خطأ").forEach{(key,label)->
+     response?.get(key)?.takeIf{it.isJsonArray}?.asJsonArray?.forEach{entry->
+      if(details.size<8&&entry.isJsonObject){
+       val item=entry.asJsonObject
+       val row=item.get("rowNumber")?.takeIf{!it.isJsonNull}?.toString()?.trim('"')?: "?"
+       val name=item.get("name")?.takeIf{!it.isJsonNull}?.asString.orEmpty()
+       val message=item.get("message")?.takeIf{!it.isJsonNull}?.asString?:label
+       details.add("الصف $row • $name: $message")
+      }
+     }
+    }
+    summary+if(details.isEmpty())"" else "\n"+details.joinToString("\n")
+   }else serverMessage?:result.toString()
+   refreshDashboardSnapshot()
+   if(_state.value.section==AdminSection.REPORTS)_state.value=_state.value.copy(busy=false,payload=result,actionMessage=actionMessage)
+   else if(_state.value.section==AdminSection.UI_LAYOUT){_state.value=_state.value.copy(busy=false,actionMessage=actionMessage);loadUiLayout(_state.value.uiLayoutPage)}
+   else{_state.value=_state.value.copy(busy=false,actionMessage=actionMessage);load(_state.value.section,true)}
   }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تنفيذ العملية")}
+ }
+ fun openFanniIdentity(id:String)=viewModelScope.launch{
+  _state.value.identityFrontPath?.let{java.io.File(it).delete()}
+  _state.value.identityBackPath?.let{java.io.File(it).delete()}
+  _state.value=_state.value.copy(busy=true,error=null,identityFanniId=id,identityFrontPath=null,identityBackPath=null)
+  try{
+   val front=repo.downloadFanniIdentity(id,"front")
+   val back=try{repo.downloadFanniIdentity(id,"back")}catch(e:Exception){front.delete();throw e}
+   _state.value=_state.value.copy(busy=false,identityFrontPath=front.absolutePath,identityBackPath=back.absolutePath)
+  }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تحميل صور بطاقة الفني")}
+ }
+ fun closeFanniIdentity(){
+  _state.value.identityFrontPath?.let{java.io.File(it).delete()}
+  _state.value.identityBackPath?.let{java.io.File(it).delete()}
+  _state.value=_state.value.copy(identityFanniId=null,identityFrontPath=null,identityBackPath=null)
  }
  fun openFanniProfile(id:String)=viewModelScope.launch{
   _state.value=_state.value.copy(busy=true,error=null,editingProfile=null,editingProfileId=null)
@@ -121,7 +233,45 @@ class AdminViewModel(app:Application):AndroidViewModel(app){
  }
  fun closeClientProfile(){_state.value=_state.value.copy(editingClient=null,editingClientId=null)}
  fun openWalletTransactions(id:String)=viewModelScope.launch{_state.value=_state.value.copy(busy=true,error=null,walletFanniId=id);try{val data=repo.get("api/admin/wallet/transactions/$id");val rows=if(data.isJsonObject)data.asJsonObject.get("transactions")?.takeIf{it.isJsonArray}?.asJsonArray?.map{it}?:emptyList() else emptyList();_state.value=_state.value.copy(busy=false,walletTransactions=rows)}catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تحميل حركات المحفظة")}}
+ fun openClientWalletTransactions(id:String)=viewModelScope.launch{
+  _state.value=_state.value.copy(busy=true,error=null,walletFanniId=id,walletTransactions=emptyList())
+  try{
+   val data=repo.get("api/admin/client-wallet/transactions/$id")
+   val rows=if(data.isJsonObject)data.asJsonObject.get("transactions")?.takeIf{it.isJsonArray}?.asJsonArray?.map{it}?:emptyList() else emptyList()
+   _state.value=_state.value.copy(busy=false,walletTransactions=rows)
+  }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تحميل حركات محفظة العميل")}
+ }
  fun closeWalletTransactions(){_state.value=_state.value.copy(walletFanniId=null,walletTransactions=emptyList())}
+ fun issueSupportPassword(role:String,id:String)=viewModelScope.launch{
+  if(role !in listOf("client","fanni")){_state.value=_state.value.copy(error="نوع الحساب غير صالح");return@launch}
+  _state.value=_state.value.copy(busy=true,error=null,supportPasswordText=null)
+  try{
+   val result=repo.mutate("POST","api/password-recovery/admin/support-passwords",JsonObject().apply{addProperty("role",role);addProperty("accountId",id)})
+   val secret=result.takeIf{it.isJsonObject}?.asJsonObject?.get("supportPassword")?.takeIf{!it.isJsonNull}?.asString
+    ?:result.takeIf{it.isJsonObject}?.asJsonObject?.get("data")?.takeIf{it.isJsonObject}?.asJsonObject?.get("supportPassword")?.takeIf{!it.isJsonNull}?.asString
+   if(secret.isNullOrBlank())error("لم يستلم التطبيق كلمة الدعم من الخادم")
+   _state.value=_state.value.copy(busy=false,supportPasswordText=secret,supportPasswordTitle=if(role=="client")"كلمة دعم جديدة للعميل" else "كلمة دعم جديدة للفني")
+  }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر إصدار كلمة الدعم")}
+ }
+ fun revealSupportPassword(role:String,id:String)=viewModelScope.launch{
+  if(role !in listOf("client","fanni")){_state.value=_state.value.copy(error="نوع الحساب غير صالح");return@launch}
+  _state.value=_state.value.copy(busy=true,error=null,supportPasswordText=null)
+  try{
+   val active=repo.get("api/password-recovery/admin/support-passwords?role=$role&accountId=$id")
+   val supportId=active.takeIf{it.isJsonObject}?.asJsonObject?.get("id")?.takeIf{!it.isJsonNull}?.asString
+    ?:error("لا توجد كلمة دعم صالحة لهذا الحساب")
+   val result=repo.get("api/password-recovery/admin/support-passwords/$supportId/reveal")
+   val secret=result.takeIf{it.isJsonObject}?.asJsonObject?.get("supportPassword")?.takeIf{!it.isJsonNull}?.asString
+    ?:result.takeIf{it.isJsonObject}?.asJsonObject?.get("data")?.takeIf{it.isJsonObject}?.asJsonObject?.get("supportPassword")?.takeIf{!it.isJsonNull}?.asString
+   if(secret.isNullOrBlank())error("تعذر استرجاع كلمة الدعم")
+   _state.value=_state.value.copy(busy=false,supportPasswordText=secret,supportPasswordTitle=if(role=="client")"كلمة الدعم الحالية للعميل" else "كلمة الدعم الحالية للفني")
+  }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر عرض كلمة الدعم")}
+ }
+ fun issueClientSupportPassword(id:String)=issueSupportPassword("client",id)
+ fun revealClientSupportPassword(id:String)=revealSupportPassword("client",id)
+ fun closeSupportPassword(){_state.value=_state.value.copy(supportPasswordText=null)}
+ fun markAdminNotificationRead(id:String)=mutate("PATCH","api/notifications/admin/$id/read")
+ fun markAllAdminNotificationsRead()=mutate("PATCH","api/notifications/admin/read-all")
  fun openSupportCase(id:String)=viewModelScope.launch{
   _state.value=_state.value.copy(busy=true,error=null)
   try{
@@ -150,7 +300,7 @@ class AdminViewModel(app:Application):AndroidViewModel(app){
    val obj=data.asJsonObject
    val rows=mutableListOf<JsonElement>()
    listOf("orders","complaints").forEach{key->obj.get(key)?.takeIf{it.isJsonArray}?.asJsonArray?.forEach{entry->rows.add(entry)}}
-   _state.value=_state.value.copy(busy=false,items=rows,payload=data)
+   _state.value=_state.value.copy(busy=false,supportSearchResults=rows,payload=data)
   }catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر البحث في أدوات الدعم")}
  }
  fun filterAuditLogs(date:String)=viewModelScope.launch{
@@ -240,7 +390,7 @@ class AdminViewModel(app:Application):AndroidViewModel(app){
   load(_state.value.section,true)
  }
  fun loadVoice(sn:String)=viewModelScope.launch{_state.value=_state.value.copy(busy=true,error=null);try{val file=repo.downloadVoice(sn);_state.value=_state.value.copy(busy=false,voicePath=file.absolutePath)}catch(e:Exception){_state.value=_state.value.copy(busy=false,error=e.message?: "تعذر تحميل التسجيل الصوتي")}}
- fun retry(){load(_state.value.section)}
+ fun retry(){if(_state.value.section==AdminSection.DASHBOARD)load(AdminSection.DASHBOARD)else{refreshDashboardSnapshot();if(_state.value.section==AdminSection.UI_LAYOUT)loadUiLayout(_state.value.uiLayoutPage)else load(_state.value.section)}}
  fun logout()=viewModelScope.launch{repo.logout();_state.value=AdminUiState(checking=false)}
  fun registerFcm(token:String)=viewModelScope.launch{runCatching{repo.registerFcm(token)}}
 }

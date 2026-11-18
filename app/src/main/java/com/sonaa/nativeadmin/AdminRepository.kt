@@ -1,10 +1,15 @@
 package com.sonaa.nativeadmin
 import android.content.Context
+import android.net.Uri
 import java.io.File
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Retrofit
 import retrofit2.HttpException
 import com.google.gson.JsonParser
@@ -46,6 +51,54 @@ class AdminRepository(context:Context){
   val detail=serverMessage?.takeIf{it.isNotBlank()}?:raw.replace(Regex("\\s+")," ").take(180).ifBlank{"لم يُرجع الخادم تفاصيل إضافية"}
   val requestPath=response?.raw()?.request?.url?.encodedPath.orEmpty()
   return IllegalStateException("فشل الطلب (HTTP ${e.code()}): $detail"+if(requestPath.isNotBlank())"\nالمسار: $requestPath" else "",e)
+ }
+ suspend fun uploadStoreMedia(uri:Uri,purpose:String):JsonElement=withContext(Dispatchers.IO){
+  if(purpose !in listOf("product","category"))error("نوع صورة المتجر غير صالح")
+  val mime=appContext.contentResolver.getType(uri)?.substringBefore(";")?.lowercase()?:error("تعذر تحديد نوع الصورة")
+  if(mime !in listOf("image/jpeg","image/png","image/webp"))error("اختار صورة JPG أو PNG أو WebP")
+  val sourceBytes=appContext.contentResolver.openInputStream(uri)?.use{it.readBytes()}?:error("تعذر قراءة ملف الصورة")
+  if(sourceBytes.isEmpty()||sourceBytes.size>20*1024*1024)error("حجم الصورة الأصلية يجب ألا يتجاوز 20 ميجابايت")
+  var bytes=sourceBytes
+  var uploadMime=mime
+  val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true}
+  android.graphics.BitmapFactory.decodeByteArray(sourceBytes,0,sourceBytes.size,bounds)
+  if(sourceBytes.size>5*1024*1024||maxOf(bounds.outWidth,bounds.outHeight)>1600){
+   if(bounds.outWidth>0&&bounds.outHeight>0){
+    var sample=1
+    while(maxOf(bounds.outWidth/(sample*2),bounds.outHeight/(sample*2))>=1600)sample*=2
+    val options=android.graphics.BitmapFactory.Options().apply{inSampleSize=sample}
+    val bitmap=android.graphics.BitmapFactory.decodeByteArray(sourceBytes,0,sourceBytes.size,options)
+    if(bitmap!=null){
+     try{
+      val scale=minOf(1f,1600f/maxOf(bitmap.width,bitmap.height))
+      val resized=if(scale<1f)android.graphics.Bitmap.createScaledBitmap(bitmap,(bitmap.width*scale).toInt().coerceAtLeast(1),(bitmap.height*scale).toInt().coerceAtLeast(1),true) else bitmap
+      try{
+       var compressed:ByteArray?=null
+       for(quality in listOf(82,72,62)){
+        val output=java.io.ByteArrayOutputStream()
+        resized.compress(android.graphics.Bitmap.CompressFormat.WEBP,quality,output)
+        val candidate=output.toByteArray()
+        if(candidate.size<=5*1024*1024&&candidate.size<sourceBytes.size){compressed=candidate;break}
+       }
+       if(compressed!=null){bytes=compressed;uploadMime="image/webp"}
+      }finally{if(resized!==bitmap)resized.recycle()}
+     }finally{bitmap.recycle()}
+    }
+   }
+  }
+  if(bytes.size>5*1024*1024)error("حجم الصورة بعد الضغط يجب ألا يتجاوز 5 ميجابايت. اختار صورة أصغر.")
+  try{api.uploadStoreMedia("api/admin/store/media?purpose=$purpose",uploadMime,bytes.toRequestBody(uploadMime.toMediaType()))}
+  catch(e:HttpException){throw apiFailure(e)}
+ }
+ suspend fun downloadFanniIdentity(id:String,side:String):File=withContext(Dispatchers.IO){
+  if(side !in listOf("front","back"))error("وجه البطاقة غير صالح")
+  val response=api.getVoice("api/fanni/admin/"+id+"/identity/"+side)
+  if(!response.isSuccessful)throw apiFailure(HttpException(response))
+  val bytes=response.body()?.bytes()?:error("ملف صورة البطاقة فارغ")
+  if(bytes.isEmpty()||bytes.size>10*1024*1024)error("حجم صورة البطاقة غير صالح")
+  val file=File(appContext.cacheDir,"fanni-identity-"+id+"-"+side+"-"+System.currentTimeMillis()+".img")
+  file.writeBytes(bytes)
+  file
  }
  suspend fun downloadVoice(sn:String):File{
   val response=api.getVoice("api/orders/${sn}/voice")
@@ -98,7 +151,14 @@ enum class AdminSection(
  SECURITY("سجل التدقيق والأمان","api/admin/audit-logs",listOf("logs","items","data")),
  SETTINGS("إعدادات المنصة","api/admin/settings",listOf("settings","data")),
  ROLES("صلاحيات المشرفين","api/admin/admin-users",listOf("users","admins","data","items")),
- CLIENTS("كل العملاء","api/admin/clients",listOf("clients","items","data"));
+ UI_LAYOUT("محرر تخطيط الواجهات","api/admin/ui-layout/admin",listOf("layout","data")),
+ CLIENTS("كل العملاء","api/admin/clients",listOf("clients","items","data")),
+ CLIENT_WALLETS("محافظ العملاء","api/admin/client-wallet/accounts",listOf("accounts","data","items")),
+ CLIENT_TOPUPS("طلبات شحن محافظ العملاء","api/admin/client-wallet/topup-requests",listOf("requests","data","items")),
+ COMMERCE_PLANS("باقات الاشتراك","api/admin/commerce/catalog",listOf("items","data")),
+ CLIENT_SUBSCRIPTIONS("اشتراكات العملاء","api/admin/commerce/subscriptions",listOf("subscriptions","data","items")),
+ STORE_PRODUCTS("منتجات المتجر","api/admin/store/products",listOf("products","data","items")),
+ STORE_ORDERS("طلبات ومبيعات المتجر","api/admin/store/orders",listOf("orders","data","items"));
  fun defaultBody()=JsonObject()
  fun extract(p:JsonElement):List<JsonElement>{
   if(p.isJsonArray)return p.asJsonArray.map{it}
