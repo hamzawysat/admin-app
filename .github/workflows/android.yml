@@ -26,6 +26,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
+      - name: Install dedicated admin launcher icon
+        run: |
+          test -s branding/admin-icon/admin_icon.jpg
+          mkdir -p app/src/main/res/drawable-nodpi
+          cp branding/admin-icon/admin_icon.jpg app/src/main/res/drawable-nodpi/admin_icon.jpg
       - name: Build admin APK
         env:
           ADMIN_PANEL_URL: ${{ secrets.ADMIN_PANEL_URL }}
