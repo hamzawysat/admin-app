@@ -1,15 +1,15 @@
 name: Admin Android Build
 
 on:
-  push:
-    paths:
-      - "**"
-  pull_request:
-    paths:
-      - "**"
+  # APK builds are manual only. Routine changes must not start a build.
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: admin-android-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
