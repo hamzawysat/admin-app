@@ -36,7 +36,7 @@ class SonaaMessagingService : FirebaseMessagingService() {
         }
         val pending = PendingIntent.getActivity(this, type.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, channel)
-            .setSmallIcon(R.drawable.sonaa_logo)
+            .setSmallIcon(R.drawable.ic_notification_logo)
             .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
             .setContentTitle(title).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setAutoCancel(true).setContentIntent(pending)
