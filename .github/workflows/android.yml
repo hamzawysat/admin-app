@@ -1,8 +1,11 @@
 name: Admin Android Build
 
 on:
-  # APK builds are manual only. Routine changes must not start a build.
+  # Manual builds remain available; main updates also produce a fresh verification APK.
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
