@@ -361,29 +361,44 @@ class MainActivity : ComponentActivity() {
     @Deprecated("Deprecated in Android API; retained for consistent WebView back navigation")
     override fun onBackPressed() {
         if (!::adminWebView.isInitialized) return
+
+        val currentPath = runCatching {
+            android.net.Uri.parse(adminWebView.url.orEmpty()).path
+        }.getOrNull()
+        val adminPath = android.net.Uri.parse(configuredAdminPanelUrl).path
+
+        if (!adminPath.isNullOrBlank() && currentPath == adminPath) {
+            // Admin section navigation is a single-page flow. Let its own
+            // history stack handle Back before consulting WebView document history.
+            val panelUrlLiteral = org.json.JSONObject.quote(configuredAdminPanelUrl)
+            adminWebView.evaluateJavascript(
+                """
+                    (function () {
+                      if (typeof window.goBack === 'function') {
+                        window.goBack();
+                        return;
+                      }
+                      if (typeof window.goAdminHome === 'function') {
+                        window.goAdminHome();
+                        return;
+                      }
+                      window.location.replace($panelUrlLiteral);
+                    })();
+                """.trimIndent(),
+                null
+            )
+            return
+        }
+
         if (adminWebView.canGoBack()) {
             adminWebView.goBack()
             return
         }
 
-        // Keep the Android system Back action inside the admin panel.
-        // When the WebView has no previous document, return to its main menu
-        // instead of finishing this Activity and exposing the client/technician app.
+        // Do not finish the admin Activity and expose the client/technician app.
         val panelUrlLiteral = org.json.JSONObject.quote(configuredAdminPanelUrl)
         adminWebView.evaluateJavascript(
-            """
-                (function () {
-                  if (typeof window.goBack === 'function') {
-                    window.goBack();
-                    return;
-                  }
-                  if (typeof window.goAdminHome === 'function') {
-                    window.goAdminHome();
-                    return;
-                  }
-                  window.location.replace($panelUrlLiteral);
-                })();
-            """.trimIndent(),
+            "window.location.replace($panelUrlLiteral);",
             null
         )
     }
