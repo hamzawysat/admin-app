@@ -8,6 +8,11 @@ val adminPanelUrl = providers.gradleProperty("ADMIN_PANEL_URL")
     .getOrElse("")
 val escapedAdminPanelUrl = adminPanelUrl.replace("\\", "\\\\").replace("\"", "\\\"")
 
+val releaseStoreFile = providers.environmentVariable("RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull ?: ""
+val releaseKeyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull ?: ""
+val releaseKeyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull ?: ""
+
 android {
     namespace = "com.sonaa.nativeadmin"
     compileSdk = 35
@@ -23,6 +28,20 @@ android {
         buildConfigField("String", "FIREBASE_APP_ID", "\"1:228718138416:android:c49c85878c948fcbb809f5\"")
         buildConfigField("String", "FIREBASE_API_KEY", "\"AIzaSyDOBGJCHuevDX1utn0M9VqDknmB15XJdj4\"")
         buildConfigField("String", "ADMIN_PANEL_URL", "\"$escapedAdminPanelUrl\"")
+    }
+    signingConfigs {
+        create("release") {
+            storeFile = file(releaseStoreFile ?: "release-key.jks")
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
