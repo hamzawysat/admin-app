@@ -1,7 +1,6 @@
 name: Admin Android Build
 
 on:
-  # Manual builds remain available; main updates also produce a fresh verification APK.
   workflow_dispatch:
   push:
     branches:
@@ -35,13 +34,45 @@ jobs:
           mkdir -p app/src/main/res/mipmap-nodpi
           rm -f app/src/main/res/mipmap-nodpi/ic_launcher.png
           cp branding/admin-icon/admin_icon.jpg app/src/main/res/mipmap-nodpi/ic_launcher.jpg
-      - name: Build admin APK
+      - name: Build admin Debug APK
         env:
           ADMIN_PANEL_URL: ${{ secrets.ADMIN_PANEL_URL }}
         run: gradle :app:assembleDebug
-      - name: Upload APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: admin-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Prepare release signing
+        id: signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$RELEASE_STORE_PASSWORD" ] && [ -n "$RELEASE_KEY_ALIAS" ] && [ -n "$RELEASE_KEY_PASSWORD" ]; then
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/admin-release.jks"
+            test -s "$RUNNER_TEMP/admin-release.jks"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Release build skipped: signing secrets are not configured."
+          fi
+      - name: Build signed Release APK
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          ADMIN_PANEL_URL: ${{ secrets.ADMIN_PANEL_URL }}
+          RELEASE_STORE_FILE: ${{ runner.temp }}/admin-release.jks
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: gradle :app:assembleRelease
+      - name: Upload signed Release APK
+        if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
