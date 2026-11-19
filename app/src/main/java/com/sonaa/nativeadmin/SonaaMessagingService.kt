@@ -38,7 +38,7 @@ class SonaaMessagingService : FirebaseMessagingService() {
         val pending = PendingIntent.getActivity(this, type.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val soundUri = Uri.parse("android.resource://$packageName/${R.raw.hamzawysat_admin_notification}")
         val notification = NotificationCompat.Builder(this, channel)
-            .setSmallIcon(R.drawable.ic_notification_logo)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
             .setContentTitle(title).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setAutoCancel(true).setContentIntent(pending)
