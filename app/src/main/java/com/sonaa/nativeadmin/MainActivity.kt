@@ -360,11 +360,32 @@ class MainActivity : ComponentActivity() {
 
     @Deprecated("Deprecated in Android API; retained for consistent WebView back navigation")
     override fun onBackPressed() {
-        if (::adminWebView.isInitialized && adminWebView.canGoBack()) {
+        if (!::adminWebView.isInitialized) return
+        if (adminWebView.canGoBack()) {
             adminWebView.goBack()
-        } else {
-            super.onBackPressed()
+            return
         }
+
+        // Keep the Android system Back action inside the admin panel.
+        // When the WebView has no previous document, return to its main menu
+        // instead of finishing this Activity and exposing the client/technician app.
+        val panelUrlLiteral = org.json.JSONObject.quote(configuredAdminPanelUrl)
+        adminWebView.evaluateJavascript(
+            """
+                (function () {
+                  if (typeof window.goBack === 'function') {
+                    window.goBack();
+                    return;
+                  }
+                  if (typeof window.goAdminHome === 'function') {
+                    window.goAdminHome();
+                    return;
+                  }
+                  window.location.replace($panelUrlLiteral);
+                })();
+            """.trimIndent(),
+            null
+        )
     }
 
     override fun onDestroy() {
