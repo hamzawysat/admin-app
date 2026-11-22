@@ -84,18 +84,18 @@ class SonaaMessagingService : FirebaseMessagingService() {
     companion object {
         const val ACTION_TOKEN_REFRESHED = "com.sonaa.nativeadmin.FCM_TOKEN_REFRESHED"
 
-        private const val CHANNEL_ORDERS = "admin_orders_v3"
-        private const val CHANNEL_STORE_ORDERS = "admin_store_orders_v3"
-        private const val CHANNEL_CLIENT_REGISTRATION = "admin_client_registration_v3"
-        private const val CHANNEL_CLIENT_ACTIVITY = "admin_client_activity_v3"
-        private const val CHANNEL_TECHNICIAN_REGISTRATION = "admin_technician_registration_v3"
-        private const val CHANNEL_TECHNICIAN_ACTIVITY = "admin_technician_activity_v3"
-        private const val CHANNEL_TECHNICIAN_PROFILE = "admin_technician_profile_v3"
-        private const val CHANNEL_SUBSCRIPTIONS = "admin_subscriptions_v3"
-        private const val CHANNEL_PASSWORD_RECOVERY = "admin_password_recovery_v3"
-        private const val CHANNEL_SUPPORT_COMPLAINTS = "admin_support_complaints_v3"
-        private const val CHANNEL_WALLET_TOPUPS = "admin_wallet_topups_v3"
-        private const val CHANNEL_SERVICE_PAYMENTS = "admin_service_payments_v3"
+        private const val CHANNEL_ORDERS = "admin_orders_v4"
+        private const val CHANNEL_STORE_ORDERS = "admin_store_orders_v4"
+        private const val CHANNEL_CLIENT_REGISTRATION = "admin_client_registration_v4"
+        private const val CHANNEL_CLIENT_ACTIVITY = "admin_client_activity_v4"
+        private const val CHANNEL_TECHNICIAN_REGISTRATION = "admin_technician_registration_v4"
+        private const val CHANNEL_TECHNICIAN_ACTIVITY = "admin_technician_activity_v4"
+        private const val CHANNEL_TECHNICIAN_PROFILE = "admin_technician_profile_v4"
+        private const val CHANNEL_SUBSCRIPTIONS = "admin_subscriptions_v4"
+        private const val CHANNEL_PASSWORD_RECOVERY = "admin_password_recovery_v4"
+        private const val CHANNEL_SUPPORT_COMPLAINTS = "admin_support_complaints_v4"
+        private const val CHANNEL_WALLET_TOPUPS = "admin_wallet_topups_v4"
+        private const val CHANNEL_SERVICE_PAYMENTS = "admin_service_payments_v4"
 
         fun createChannels(manager: NotificationManager) {
             if (Build.VERSION.SDK_INT >= 26) {
@@ -103,7 +103,13 @@ class SonaaMessagingService : FirebaseMessagingService() {
                 // twelve current notification categories instead of both sets.
                 listOf(
                     "order_new_v2", "fanni_register_v2", "client_register_v2",
-                    "password_reset_v2", "support_v2", "wallet_charge_v2"
+                    "password_reset_v2", "support_v2", "wallet_charge_v2",
+                    "admin_orders_v3", "admin_store_orders_v3", "admin_client_registration_v3",
+                    "admin_client_activity_v3", "admin_technician_registration_v3",
+                    "admin_technician_activity_v3", "admin_technician_profile_v3",
+                    "admin_subscriptions_v3", "admin_password_recovery_v3",
+                    "admin_support_complaints_v3", "admin_wallet_topups_v3",
+                    "admin_service_payments_v3"
                 ).forEach(manager::deleteNotificationChannel)
 
                 val soundUri = Uri.parse("android.resource://com.sonaa.nativeadmin/${R.raw.hamzawysat_admin_notification}")
