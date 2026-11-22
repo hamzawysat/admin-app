@@ -10,11 +10,13 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+
 class SonaaMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         getSharedPreferences("sonaa_admin_session", Context.MODE_PRIVATE).edit().putString("pending_fcm_token", token).apply()
         sendBroadcast(Intent(ACTION_TOKEN_REFRESHED).setPackage(packageName).putExtra("token", token))
     }
+
     override fun onMessageReceived(message: RemoteMessage) {
         val type = message.data["type"].orEmpty()
         val channel = channelFor(type)
@@ -22,12 +24,14 @@ class SonaaMessagingService : FirebaseMessagingService() {
         val body = message.notification?.body ?: message.data["message"] ?: ""
         val allowedDestinations = setOf("orders", "storeOrders", "commerceSubscriptions", "technicians", "clients", "clientWallet", "wallet", "recovery", "support", "topups", "wallets")
         val destination = message.data["destination"]?.takeIf { it in allowedDestinations } ?: when (channel) {
-            "order_new_v2" -> "orders"
-            "fanni_register_v2" -> "technicians"
-            "client_register_v2" -> "clients"
-            "password_reset_v2" -> "recovery"
-            "support_v2" -> "support"
-            "wallet_charge_v2" -> "topups"
+            CHANNEL_ORDERS, CHANNEL_STORE_ORDERS -> "orders"
+            CHANNEL_TECHNICIAN_REGISTRATION, CHANNEL_TECHNICIAN_ACTIVITY, CHANNEL_TECHNICIAN_PROFILE -> "technicians"
+            CHANNEL_CLIENT_REGISTRATION, CHANNEL_CLIENT_ACTIVITY -> "clients"
+            CHANNEL_SUBSCRIPTIONS -> "commerceSubscriptions"
+            CHANNEL_PASSWORD_RECOVERY -> "recovery"
+            CHANNEL_SUPPORT_COMPLAINTS -> "support"
+            CHANNEL_WALLET_TOPUPS -> "topups"
+            CHANNEL_SERVICE_PAYMENTS -> "wallet"
             else -> "dashboard"
         }
         val intent = Intent(this, MainActivity::class.java).apply {
@@ -47,38 +51,85 @@ class SonaaMessagingService : FirebaseMessagingService() {
         val notificationId = message.data["notificationId"]?.takeIf { it.isNotBlank() }?.hashCode() ?: type.hashCode()
         getSystemService(NotificationManager::class.java).notify(notificationId, notification)
     }
+
     private fun channelFor(type: String) = when (type) {
-        "order_new", "new_order", "admin_new_order", "admin_store_order", "admin_order_offer_accepted",
+        "order_new", "new_order", "admin_new_order", "admin_order_offer_accepted",
         "admin_order_cancelled", "admin_order_completed", "admin_fanni_offer",
-        "admin_price_change_requested", "admin_client_rating" -> "order_new_v2"
-        "fanni_register", "new_fanni", "admin_new_technician", "admin_fanni_profile_edit",
-        "admin_fanni_login", "admin_fanni_logout" -> "fanni_register_v2"
-        "client_register", "new_client", "admin_new_client", "admin_client_login",
-        "admin_client_logout" -> "client_register_v2"
-        "password_reset", "admin_password_recovery", "admin_password_recovery_message" -> "password_reset_v2"
+        "admin_price_change_requested", "admin_client_rating" -> CHANNEL_ORDERS
+
+        "admin_store_order" -> CHANNEL_STORE_ORDERS
+
+        "fanni_register", "new_fanni", "admin_new_technician" -> CHANNEL_TECHNICIAN_REGISTRATION
+        "admin_fanni_login", "admin_fanni_logout" -> CHANNEL_TECHNICIAN_ACTIVITY
+        "admin_fanni_profile_edit" -> CHANNEL_TECHNICIAN_PROFILE
+
+        "client_register", "new_client", "admin_new_client" -> CHANNEL_CLIENT_REGISTRATION
+        "admin_client_login", "admin_client_logout" -> CHANNEL_CLIENT_ACTIVITY
+
+        "admin_subscription_request", "admin_subscription_renewed" -> CHANNEL_SUBSCRIPTIONS
+        "password_reset", "admin_password_recovery", "admin_password_recovery_message" -> CHANNEL_PASSWORD_RECOVERY
         "support", "new_complaint", "admin_support_request", "admin_new_complaint",
-        "admin_support_followup" -> "support_v2"
+        "admin_support_followup" -> CHANNEL_SUPPORT_COMPLAINTS
+
         "wallet_charge", "topup_request", "admin_new_topup", "admin_client_topup",
-        "admin_service_payment_held", "admin_subscription_request", "admin_subscription_renewed", "wallet_credit",
-        "fanni_wallet_settlement", "technician_settlement", "topup_approved",
+        "wallet_credit", "fanni_wallet_settlement", "technician_settlement", "topup_approved",
         "topup_rejected", "wallet_debit", "commission_deducted", "client_wallet_topup_approved",
         "client_wallet_topup_rejected", "client_wallet_credit", "client_wallet_debit",
-        "client_wallet_settlement", "client_service_refunded" -> "wallet_charge_v2"
-        else -> "support_v2"
+        "client_wallet_settlement", "client_service_refunded" -> CHANNEL_WALLET_TOPUPS
+
+        "admin_service_payment_held" -> CHANNEL_SERVICE_PAYMENTS
+        else -> CHANNEL_SUPPORT_COMPLAINTS
     }
+
     companion object {
         const val ACTION_TOKEN_REFRESHED = "com.sonaa.nativeadmin.FCM_TOKEN_REFRESHED"
+
+        private const val CHANNEL_ORDERS = "admin_orders_v4"
+        private const val CHANNEL_STORE_ORDERS = "admin_store_orders_v4"
+        private const val CHANNEL_CLIENT_REGISTRATION = "admin_client_registration_v4"
+        private const val CHANNEL_CLIENT_ACTIVITY = "admin_client_activity_v4"
+        private const val CHANNEL_TECHNICIAN_REGISTRATION = "admin_technician_registration_v4"
+        private const val CHANNEL_TECHNICIAN_ACTIVITY = "admin_technician_activity_v4"
+        private const val CHANNEL_TECHNICIAN_PROFILE = "admin_technician_profile_v4"
+        private const val CHANNEL_SUBSCRIPTIONS = "admin_subscriptions_v4"
+        private const val CHANNEL_PASSWORD_RECOVERY = "admin_password_recovery_v4"
+        private const val CHANNEL_SUPPORT_COMPLAINTS = "admin_support_complaints_v4"
+        private const val CHANNEL_WALLET_TOPUPS = "admin_wallet_topups_v4"
+        private const val CHANNEL_SERVICE_PAYMENTS = "admin_service_payments_v4"
+
         fun createChannels(manager: NotificationManager) {
             if (Build.VERSION.SDK_INT >= 26) {
+                // Remove the six legacy grouped channels so Android shows the
+                // twelve current notification categories instead of both sets.
+                listOf(
+                    "order_new_v2", "fanni_register_v2", "client_register_v2",
+                    "password_reset_v2", "support_v2", "wallet_charge_v2",
+                    "admin_orders_v3", "admin_store_orders_v3", "admin_client_registration_v3",
+                    "admin_client_activity_v3", "admin_technician_registration_v3",
+                    "admin_technician_activity_v3", "admin_technician_profile_v3",
+                    "admin_subscriptions_v3", "admin_password_recovery_v3",
+                    "admin_support_complaints_v3", "admin_wallet_topups_v3",
+                    "admin_service_payments_v3"
+                ).forEach(manager::deleteNotificationChannel)
+
                 val soundUri = Uri.parse("android.resource://com.sonaa.nativeadmin/${R.raw.hamzawysat_admin_notification}")
                 val audioAttributes = AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build()
                 listOf(
-                    "order_new_v2" to "طلبات جديدة", "fanni_register_v2" to "تسجيل فني جديد",
-                    "client_register_v2" to "تسجيل عميل جديد", "password_reset_v2" to "استعادة كلمة المرور",
-                    "support_v2" to "الدعم والشكاوى", "wallet_charge_v2" to "شحن المحفظة"
+                    CHANNEL_CLIENT_REGISTRATION to "تسجيل عميل جديد",
+                    CHANNEL_CLIENT_ACTIVITY to "نشاط العملاء",
+                    CHANNEL_TECHNICIAN_REGISTRATION to "تسجيل فني جديد",
+                    CHANNEL_TECHNICIAN_ACTIVITY to "نشاط الفنيين",
+                    CHANNEL_TECHNICIAN_PROFILE to "تعديلات ملفات الفنيين",
+                    CHANNEL_ORDERS to "الطلبات",
+                    CHANNEL_STORE_ORDERS to "طلبات المتجر",
+                    CHANNEL_SUBSCRIPTIONS to "الاشتراكات",
+                    CHANNEL_PASSWORD_RECOVERY to "استعادة كلمة المرور",
+                    CHANNEL_SUPPORT_COMPLAINTS to "الدعم والشكاوى",
+                    CHANNEL_WALLET_TOPUPS to "شحن المحافظ",
+                    CHANNEL_SERVICE_PAYMENTS to "مدفوعات الخدمات"
                 ).forEach { (id, name) ->
                     val channel = NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH)
                     channel.setSound(soundUri, audioAttributes)
